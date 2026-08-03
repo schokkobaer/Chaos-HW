@@ -328,11 +328,12 @@ int main(int argc, char** argv) {
             sceneFiles.emplace_back(argv[i]);
     } else {
         sceneFiles = {
-            "scenes/scene0.crtscene",
+            /**"scenes/scene0.crtscene",
             "scenes/scene1.crtscene",
             "scenes/scene2.crtscene",
             "scenes/scene3.crtscene",
-            "scenes/scene4.crtscene"
+            "scenes/scene4.crtscene"**/
+            "/home/ckai/Learning/C++_Chaos/RayTracing/Homework/Homework8/Scenes/scene0.crtscene"
         };
     }
 
