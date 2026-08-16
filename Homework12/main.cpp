@@ -8,12 +8,8 @@
 #include <thread>
 #include <vector>
 #include<limits> //For std::numeric_limits
-#include "raytracer/Color.h"
-#include "raytracer/Light.h"
-#include "raytracer/Triangle.h"
-#include "raytracer/Camera.h"
-#include "raytracer/Object.h"
-#include "raytracer/Material.h"
+#include "raytracer/Scene.h"
+#include "raytracer/Renderer.h"
 #include "rapidjson/document.h"
 #include "rapidjson/istreamwrapper.h"
 
@@ -26,29 +22,10 @@ using crt::CRTLight;
 using crt::Camera;
 using crt::Ray;
 using crt::Object;
+using crt::Scene;
+using crt::HitRecord;
 
 constexpr double kShadowEpsilon = 1e-6;
-constexpr int kMaxRayDepth = 5;
-
-
-struct Scene {
-	int imageWidth = 1920;
-	int imageHeight = 1080;
-	CRTColor backgroundColor;
-	Camera camera;
-	std::vector<CRTLight> lights;
-	std::vector<Object> objects;
-	std::vector<crt::Material> materials;
-};
-
-struct HitRecord {
-	double t = 0.0;
-	CRTVector position;
-	CRTVector normal;
-	double u = 0.0;
-	double v = 0.0;
-	size_t objectIndex = 0;
-};
 
 
 
@@ -113,141 +90,6 @@ void addLightSpheres(Scene& scene, double radius = 0.14, int stacks = 14, int sl
 	}
 }
 
-bool findClosestHit(const Scene& scene, const Ray& ray, HitRecord& hit) 
-{
-	double closestT = std::numeric_limits<double>::max();
-	size_t closestTriangleIdx =0;
-	size_t closestObjectIdx = 0;
-	double u = 0.0;
-	double v = 0.0;
-	bool hitFound = false;
-	for(size_t objIdx = 0; objIdx < scene.objects.size(); ++objIdx) 
-	{
-		const Object& object = scene.objects[objIdx];
-	
-		for (size_t triIdx = 0; triIdx < object.m_triangles.size(); ++triIdx) 
-		{
-			const std::optional<crt::TriangleHit> triangleHit = object.m_triangles[triIdx].intersect(ray);
-			if (triangleHit.has_value())
-			{
-
-				if (triangleHit->t < closestT)
-				{
-					hitFound = true;
-					closestT = triangleHit->t;
-					closestTriangleIdx = triIdx;
-					closestObjectIdx = objIdx;
-					u = triangleHit->u;
-					v = triangleHit->v;
-
-
-				}
-
-			}
-		}
-	}
-	if (!hitFound) 
-	{
-		return false;
-	}
-	bool localIsSmoothShadingUsed = false;
-	const int matIdx = scene.objects[closestObjectIdx].m_materialIndex;
-	if (matIdx >= 0 && matIdx < static_cast<int>(scene.materials.size())) {
-		localIsSmoothShadingUsed = scene.materials[matIdx].m_smoothShading;
-	}
-	const CRTTriangle& triangle = scene.objects[closestObjectIdx].m_triangles[closestTriangleIdx];
-	hit.t = closestT;
-	hit.position = ray.origin + ray.direction * closestT;
-	if (localIsSmoothShadingUsed) 
-	{
-		CRTVector interpolatedNormal = triangle.n0 * (1.0 - u - v) + triangle.n1 * u + triangle.n2 * v;
-		hit.normal = interpolatedNormal.normalized();
-	} 
-	else 
-	{
-		hit.normal = triangle.normal();
-	}
-	// hit.normal = triangle.normal(); // This line is redundant and should be removed
-	hit.u = u;
-	hit.v = v;
-	hit.objectIndex = closestObjectIdx;
-	return true;
-}
-
-
-double lightContributionForHit(const Scene& scene, const HitRecord& hit, const CRTLight& sceneLight) {
-	constexpr double kPi = std::numbers::pi_v<double>;
-
-	const CRTVector toLight = sceneLight.getPosition() - hit.position;
-	const double distanceToLight = toLight.length();
-	if (distanceToLight <= 0.0) {
-		return 0.0;
-	}
-
-	const CRTVector lightDir = toLight * (1.0 / distanceToLight);
-	const double cosLaw = std::max(0.0, hit.normal.dot(lightDir));
-	if (cosLaw <= 0.0) {
-		return 0.0;
-	}
-
-	const Ray shadowRay(hit.position + lightDir * kShadowEpsilon, lightDir);
-	for (const Object& object : scene.objects) {
-		if (object.m_isEmissive) {
-			continue;
-		}
-
-		for (const CRTTriangle& triangle : object.m_triangles) {
-			const std::optional<crt::TriangleHit> shadowHit = triangle.intersect(shadowRay);
-			if (shadowHit.has_value() && shadowHit->t < distanceToLight - kShadowEpsilon) {
-				return 0.0;
-			}
-		}
-	}
-	const double sphereArea = 4.0 * kPi * distanceToLight * distanceToLight;
-	return (sceneLight.getIntensity() / sphereArea) * cosLaw;
-}
-
-double composedLightForHit(const Scene& scene, const HitRecord& hit) {
-	double lightSum = 0.0;
-	if (scene.lights.empty()) {
-		std::cerr << "Warning: scene has no lights, using default light factor of 1.0" << std::endl;	
-		return 1.0;
-	}
-	for (const CRTLight& sceneLight : scene.lights) {
-		lightSum += lightContributionForHit(scene, hit, sceneLight);
-	}
-	return lightSum;
-}
-
-CRTColor shadeHit(const Scene& scene, const HitRecord& hit) {
-	if (scene.objects[hit.objectIndex].m_isEmissive) {
-		return kLightColor;
-	}
-
-	const double lightFactor = composedLightForHit(scene, hit);
-	if (lightFactor <= 0.0) {
-		return CRTColor(0, 0, 0);
-	}
-
-	const Object& obj = scene.objects[hit.objectIndex];
-	bool objectHasValidMaterial = obj.m_materialIndex >=0 && obj.m_materialIndex < static_cast<int>(scene.materials.size());
-	
-	double r_albedo{1};
-	double g_albedo{1};
-	double b_albedo{1};
-	
-	if (objectHasValidMaterial)
-	{
-		r_albedo = std::clamp(scene.materials[obj.m_materialIndex].m_albedo[0] , 0.0, 1.0);
-		g_albedo = std::clamp(scene.materials[obj.m_materialIndex].m_albedo[1] , 0.0, 1.0);
-		b_albedo = std::clamp(scene.materials[obj.m_materialIndex].m_albedo[2] , 0.0, 1.0);
-	}
-	return CRTColor(
-		std::min(255, static_cast<int>(255 * r_albedo * lightFactor)),
-		std::min(255, static_cast<int>(255 * g_albedo * lightFactor)),
-		std::min(255, static_cast<int>(255 * b_albedo * lightFactor))
-	);
-}
 
 bool loadScene(const std::string& path, Scene& scene) {
 	std::ifstream fileStream(path);
@@ -317,7 +159,7 @@ bool loadScene(const std::string& path, Scene& scene) {
     const auto& mats = doc["materials"];
     for (rapidjson::SizeType i = 0; i < mats.Size(); ++i) {
         const auto& mat = mats[i];
-        double albedoValues[3] = {0.0, 0.0, 0.0};
+        double albedoValues[3] = {1.0, 1.0, 1.0};
 		bool smoothShadingFlag{false};
 		crt::MaterialType materialType = crt::MaterialType::DIFFUSE;
         if (mat.HasMember("albedo")) {
@@ -337,9 +179,17 @@ bool loadScene(const std::string& path, Scene& scene) {
 					materialType = crt::MaterialType::REFLECTIVE;
 				} else if (typeStr == "refractive") {
 					materialType = crt::MaterialType::REFRACTIVE;
+
 				}
 		}
 		crt::Material material(albedoValues, materialType, smoothShadingFlag);
+
+		// If the material is refractive, check for index_of_refraction
+		if (materialType == crt::MaterialType::REFRACTIVE && mat.HasMember("ior")) {
+			double indexOfRefraction = mat["ior"].GetDouble();
+			material.setIndexOfRefraction(indexOfRefraction);
+		}
+		
         scene.materials.push_back(material);
     }
 	}
@@ -407,7 +257,7 @@ bool loadScene(const std::string& path, Scene& scene) {
 		}
 	}
 
-	addLightSpheres(scene);
+	//addLightSpheres(scene);
 	return true;
 }
 
@@ -422,101 +272,24 @@ bool smoothShadingMaterialIsUsed(const Scene& scene) {
 	}
 	return false;
 }
-void renderScene(const Scene& scene, std::vector<CRTColor>& pixels) {
-	const double aspectRatio = static_cast<double>(scene.imageWidth) / static_cast<double>(scene.imageHeight);
-	pixels.assign(static_cast<size_t>(scene.imageWidth) * static_cast<size_t>(scene.imageHeight), scene.backgroundColor);
 
-	auto renderRows = [&](int rowStart, int rowEnd) {
-		for (int rowIdx = rowStart; rowIdx < rowEnd; ++rowIdx) {
-			for (int colIdx = 0; colIdx < scene.imageWidth; ++colIdx) {
-				const double xRaster = static_cast<double>(colIdx) + 0.5;
-				const double yRaster = static_cast<double>(rowIdx) + 0.5;
 
-				const double xNdc = xRaster / static_cast<double>(scene.imageWidth);
-				const double yNdc = yRaster / static_cast<double>(scene.imageHeight);
+crt::Ray cameraRayForPixel(const Scene& scene, int colIdx, int rowIdx, double aspectRatio)
+{
+	const double xRaster = static_cast<double>(colIdx) + 0.5;
+	const double yRaster = static_cast<double>(rowIdx) + 0.5;
 
-				double xScreen = (2.0 * xNdc) - 1.0;
-				const double yScreen = 1.0 - (2.0 * yNdc);
-				xScreen *= aspectRatio;
+	const double xNdc = xRaster / static_cast<double>(scene.imageWidth);
+	const double yNdc = yRaster / static_cast<double>(scene.imageHeight);
 
-				int rayDepth = 0;
-				bool rayLostInBackground = false;
-				bool rayIsAbsorbed = false;
-				CRTColor attenuation(255, 255, 255);
-				Ray ray = scene.camera.generateRay(xScreen, yScreen);
-				while (rayDepth < kMaxRayDepth && !rayLostInBackground && !rayIsAbsorbed) 
-				{
-					const int pixelIndex = rowIdx * scene.imageWidth + colIdx;
-					HitRecord hit;
-					if (!findClosestHit(scene, ray, hit)) {
-						// Ray escaped to background — apply accumulated attenuation
-						pixels[pixelIndex] = CRTColor(
-							std::min(255, scene.backgroundColor.r * attenuation.r / 255),
-							std::min(255, scene.backgroundColor.g * attenuation.g / 255),
-							std::min(255, scene.backgroundColor.b * attenuation.b / 255)
-						);
-						rayLostInBackground = true;
-						break;
-					}
+	double xScreen = (2.0 * xNdc) - 1.0;
+	const double yScreen = 1.0 - (2.0 * yNdc);
+	xScreen *= aspectRatio;
 
-					bool objectHasValidMaterial = scene.objects[hit.objectIndex].m_materialIndex >= 0 && scene.objects[hit.objectIndex].m_materialIndex < static_cast<int>(scene.materials.size());
-					if (objectHasValidMaterial && scene.materials[scene.objects[hit.objectIndex].m_materialIndex].m_type == crt::MaterialType::REFLECTIVE)
-					{
-						if (ray.direction.dot(hit.normal) > 0.0) {
-							// Back face of one-sided mirror: shade as diffuse instead of reflecting
-							const CRTColor shadeResult = shadeHit(scene, hit);
-							pixels[pixelIndex] = CRTColor(
-								std::min(255, shadeResult.r * attenuation.r / 255),
-								std::min(255, shadeResult.g * attenuation.g / 255),
-								std::min(255, shadeResult.b * attenuation.b / 255)
-							);
-							rayIsAbsorbed = true;
-							break;
-						}
-						//Reflective material: ray hits the fron face fo the mirror, calculating the reflection
-						const crt::Material& mat = scene.materials[scene.objects[hit.objectIndex].m_materialIndex];
-						attenuation.r = static_cast<int>(attenuation.r * mat.m_albedo[0]);
-						attenuation.g = static_cast<int>(attenuation.g * mat.m_albedo[1]);
-						attenuation.b = static_cast<int>(attenuation.b * mat.m_albedo[2]);
-						ray.direction = ray.direction - hit.normal * (ray.direction.dot(hit.normal) * 2.0);
-						ray.origin = hit.position + ray.direction * kShadowEpsilon;
-						rayDepth++;
-						continue;
-					}
-
-					else 
-					{
-
-						const CRTColor shadeResult = shadeHit(scene, hit);
-						pixels[pixelIndex] = CRTColor(
-							std::min(255, shadeResult.r * attenuation.r / 255),
-							std::min(255, shadeResult.g * attenuation.g / 255),
-							std::min(255, shadeResult.b * attenuation.b / 255)
-						);
-						rayIsAbsorbed = true;
-						break;
-					}
-				}
-			}
-		}
-	};
-
-	const unsigned int threadCount = std::max(1u, std::thread::hardware_concurrency());
-	const int rowsPerThread = (scene.imageHeight + static_cast<int>(threadCount) - 1) / static_cast<int>(threadCount);
-
-	std::vector<std::thread> threads;
-	for (unsigned int threadIdx = 0; threadIdx < threadCount; ++threadIdx) {
-		const int rowStart = static_cast<int>(threadIdx) * rowsPerThread;
-		const int rowEnd = std::min(scene.imageHeight, rowStart + rowsPerThread);
-		if (rowStart >= rowEnd) {
-			break;
-		}
-		threads.emplace_back(renderRows, rowStart, rowEnd);
-	}
-	for (std::thread& t : threads) {
-		t.join();
-	}
+	return scene.camera.generateRay(xScreen, yScreen);
 }
+
+
 
 void writePPM(const std::string& path, const Scene& scene, const std::vector<CRTColor>& pixels) {
 	std::ofstream out(path, std::ios::out | std::ios::binary);
@@ -563,11 +336,11 @@ int main(int argc, char** argv) {
 			sceneFiles.emplace_back(argv[i]);
 		}
 	} else {
-		sceneFiles = {"Homework8/Scenes/scene0.crtscene"};
+		sceneFiles = {"/home/ckai/Learning/C++_Chaos/RayTracing/Homework/Homework11/Scenes/homework11_scene2.crtscene"};
 	}
 
 
-	std::filesystem::create_directories("output");
+	std::filesystem::create_directories("output/homework11");
 
 	for (const std::string& sceneFile : sceneFiles) {
 		const std::string resolvedSceneFile = resolveScenePath(sceneFile);
@@ -585,7 +358,7 @@ int main(int argc, char** argv) {
 			std::vector<CRTColor> pixels;
 			renderScene(scene, pixels);
 
-			const std::string outputPath = "output/homework9/" + scenePath.stem().string()
+			const std::string outputPath = "output/homework11/" + scenePath.stem().string()
 				+ ".ppm";
 			writePPM(outputPath, scene, pixels);
 

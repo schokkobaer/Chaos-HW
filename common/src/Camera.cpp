@@ -1,4 +1,5 @@
 #include "raytracer/Camera.h"
+#include "raytracer/Camera.h"
 
 namespace crt {
 
@@ -61,4 +62,18 @@ Ray Camera::generateRay(double xScreen, double yScreen) const {
     return Ray(origin, dir);
 }
 
+Ray Camera::generateRayForPixel(int colIdx, int rowIdx, int imageWidth, int imageHeight, double aspectRatio, double subX, double subY) const
+{
+    const double xRaster = static_cast<double>(colIdx) + subX;
+	const double yRaster = static_cast<double>(rowIdx) + subY;
+
+	const double xNdc = xRaster / static_cast<double>(imageWidth);
+	const double yNdc = yRaster / static_cast<double>(imageHeight);
+
+	double xScreen = (2.0 * xNdc) - 1.0;
+	const double yScreen = 1.0 - (2.0 * yNdc);
+	xScreen *= aspectRatio;
+
+	return this->generateRay(xScreen, yScreen);
+}
 } // namespace crt

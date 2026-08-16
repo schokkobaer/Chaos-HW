@@ -15,7 +15,7 @@ add_subdirectory(common)
 
 add_subdirectory(Homework8)
 add_subdirectory(Homework9)
-
+add_subdirectory(Homework11)
 # To add the next homework, create HomeworkN/ with its own CMakeLists.txt
 # (see Homework8/CMakeLists.txt for the pattern) and add:
 #   add_subdirectory(HomeworkN)

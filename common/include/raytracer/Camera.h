@@ -45,6 +45,10 @@ struct Camera {
     // Generate a ray through screen-space offsets xScreen/yScreen (typically
     // in [-1, 1], already scaled by aspect ratio/FOV by the caller).
     Ray generateRay(double xScreen, double yScreen) const;
+
+    // Generate a ray given the pixel coordinates. subX/subY are the sub-pixel
+    // sample offsets within the pixel (each in [0, 1), default 0.5 = pixel center).
+    Ray generateRayForPixel(int colIdx, int rowIdx, int imageWidth, int imageHeight, double aspectRatio, double subX = 0.5, double subY = 0.5) const;
 };
 
 } // namespace crt
