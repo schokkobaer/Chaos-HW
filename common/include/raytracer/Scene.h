@@ -6,6 +6,7 @@
 #include "raytracer/Camera.h"
 #include "raytracer/Object.h"
 #include "raytracer/Material.h"
+#include "raytracer/Texture.h"
 
 namespace crt
 {
@@ -18,6 +19,7 @@ namespace crt
         std::vector<CRTLight> lights;
         std::vector<Object> objects;
         std::vector<crt::Material> materials;
+        std::vector<crt::Texture> textures;
     };
 
     struct HitRecord
@@ -27,6 +29,8 @@ namespace crt
         CRTVector normal;
         double u = 0.0;
         double v = 0.0;
+        double texU = 0.0;
+        double texV = 0.0;
         size_t objectIndex = 0;
     };
 

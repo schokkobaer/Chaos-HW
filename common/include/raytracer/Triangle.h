@@ -39,6 +39,7 @@ namespace crt {
 struct CRTTriangle {
     CRTVector v0, v1, v2;
     CRTVector n0, n1, n2; // Vertex normals for smooth shading
+    CRTVector uv0, uv1, uv2; // Vertex texture coordinates (z unused)
     int colorIndex = 0;
 
     CRTTriangle(const CRTVector& v0, const CRTVector& v1, const CRTVector& v2 )
@@ -50,6 +51,11 @@ struct CRTTriangle {
         this->n0 = n0;
         this->n1 = n1;
         this->n2 = n2;
+    }
+    void setVertexUVs(const CRTVector& uv0, const CRTVector& uv1, const CRTVector& uv2) {
+        this->uv0 = uv0;
+        this->uv1 = uv1;
+        this->uv2 = uv2;
     }
     double area() const;
 

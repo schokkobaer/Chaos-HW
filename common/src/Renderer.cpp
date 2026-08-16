@@ -66,8 +66,21 @@ namespace crt
         // hit.normal = triangle.normal(); // This line is redundant and should be removed
         hit.u = u;
         hit.v = v;
+        hit.texU = triangle.uv0.x * (1.0 - u - v) + triangle.uv1.x * u + triangle.uv2.x * v;
+        hit.texV = triangle.uv0.y * (1.0 - u - v) + triangle.uv1.y * u + triangle.uv2.y * v;
         hit.objectIndex = closestObjectIdx;
         return true;
+    }
+
+    // Resolves a material's color at a hit point, sampling its texture if one is referenced.
+    CRTVector resolveAlbedo(const Scene &scene, const Material &material, const HitRecord &hit)
+    {
+        if (material.m_textureIndex >= 0 && material.m_textureIndex < static_cast<int>(scene.textures.size()))
+        {
+            const double baryW = 1.0 - hit.u - hit.v;
+            return scene.textures[material.m_textureIndex].sample(hit.texU, hit.texV, hit.u, hit.v, baryW);
+        }
+        return CRTVector(material.m_albedo[0], material.m_albedo[1], material.m_albedo[2]);
     }
 
     Radiance shadeHitRadiance(const Scene &scene, const HitRecord &hit)
@@ -93,9 +106,10 @@ namespace crt
 
         if (objectHasValidMaterial)
         {
-            r_albedo = std::clamp(scene.materials[obj.m_materialIndex].m_albedo[0], 0.0, 1.0);
-            g_albedo = std::clamp(scene.materials[obj.m_materialIndex].m_albedo[1], 0.0, 1.0);
-            b_albedo = std::clamp(scene.materials[obj.m_materialIndex].m_albedo[2], 0.0, 1.0);
+            const CRTVector albedo = resolveAlbedo(scene, scene.materials[obj.m_materialIndex], hit);
+            r_albedo = std::clamp(albedo.x, 0.0, 1.0);
+            g_albedo = std::clamp(albedo.y, 0.0, 1.0);
+            b_albedo = std::clamp(albedo.z, 0.0, 1.0);
         }
         return Radiance{r_albedo * lightFactor, g_albedo * lightFactor, b_albedo * lightFactor};
     }
@@ -188,7 +202,8 @@ namespace crt
                 }
                 // Reflective material: ray hits the fron face fo the mirror, calculating the reflection
                 const crt::Material &mat = scene.materials[scene.objects[hit.objectIndex].m_materialIndex];
-                attenuation = attenuation * Radiance{mat.m_albedo[0], mat.m_albedo[1], mat.m_albedo[2]};
+                const CRTVector reflectiveAlbedo = resolveAlbedo(scene, mat, hit);
+                attenuation = attenuation * Radiance{reflectiveAlbedo.x, reflectiveAlbedo.y, reflectiveAlbedo.z};
                 ray.direction = ray.direction - hit.normal * (ray.direction.dot(hit.normal) * 2.0);
                 ray.origin = hit.position + ray.direction * kShadowEpsilon;
                 startRayDepth++;
@@ -213,7 +228,8 @@ namespace crt
                     cosThetaIn = -cosThetaIn;
                 }
                 const double eta = indexOfRefractionIn / indexOfRefractionOut;
-                attenuation = attenuation * Radiance{mat.m_albedo[0], mat.m_albedo[1], mat.m_albedo[2]};
+                const CRTVector refractiveAlbedo = resolveAlbedo(scene, mat, hit);
+                attenuation = attenuation * Radiance{refractiveAlbedo.x, refractiveAlbedo.y, refractiveAlbedo.z};
                 const double sinThetaout = eta * std::sqrt(std::max(0.0, 1.0 - cosThetaIn * cosThetaIn));
 
                 double fresneleWeighting = 1.0;

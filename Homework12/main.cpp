@@ -6,6 +6,7 @@
 #include <numbers>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include<limits> //For std::numeric_limits
 #include "raytracer/Scene.h"
@@ -39,6 +40,30 @@ static CRTColor colorFromUnitFloats(const rapidjson::Value& arr)
 }
 
 static const CRTColor kLightColor(255, 230, 40);
+
+// Resolves scene resource paths (e.g. bitmap texture files) that are given relative to the Homework12 folder.
+std::string resolveResourcePath(const std::string& relativePath) {
+	std::string trimmed = relativePath;
+	while (!trimmed.empty() && trimmed.front() == '/') {
+		trimmed.erase(trimmed.begin());
+	}
+	const std::filesystem::path input(trimmed);
+	if (std::filesystem::exists(input)) {
+		return input.string();
+	}
+
+	const std::vector<std::filesystem::path> candidates = {
+		std::filesystem::path("Homework12") / input,
+		std::filesystem::path("../Homework12") / input,
+		std::filesystem::path("../../Homework12") / input,
+	};
+	for (const auto& candidate : candidates) {
+		if (std::filesystem::exists(candidate)) {
+			return candidate.string();
+		}
+	}
+	return trimmed;
+}
 
 void appendSphereMesh(crt::Object& emptyLightObject,  const CRTVector& center, double radius, int stacks, int slices)
 {
@@ -155,6 +180,44 @@ bool loadScene(const std::string& path, Scene& scene) {
 		}
 	}
 
+	std::unordered_map<std::string, int> textureNameToIndex;
+	if (doc.HasMember("textures")) {
+		const auto& texturesJson = doc["textures"];
+		for (rapidjson::SizeType i = 0; i < texturesJson.Size(); ++i) {
+			const auto& texJson = texturesJson[i];
+			crt::Texture texture;
+			texture.m_name = texJson["name"].GetString();
+			const std::string typeStr = texJson["type"].GetString();
+			if (typeStr == "albedo") {
+				texture.m_type = crt::TextureType::ALBEDO;
+				const auto& albedoArray = texJson["albedo"];
+				texture.m_albedo = CRTVector(albedoArray[0].GetDouble(), albedoArray[1].GetDouble(), albedoArray[2].GetDouble());
+			} else if (typeStr == "edges") {
+				texture.m_type = crt::TextureType::EDGES;
+				const auto& edgeColorArray = texJson["edge_color"];
+				texture.m_edgeColor = CRTVector(edgeColorArray[0].GetDouble(), edgeColorArray[1].GetDouble(), edgeColorArray[2].GetDouble());
+				const auto& innerColorArray = texJson["inner_color"];
+				texture.m_innerColor = CRTVector(innerColorArray[0].GetDouble(), innerColorArray[1].GetDouble(), innerColorArray[2].GetDouble());
+				texture.m_edgeWidth = texJson["edge_width"].GetDouble();
+			} else if (typeStr == "checker") {
+				texture.m_type = crt::TextureType::CHECKER;
+				const auto& colorAArray = texJson["color_A"];
+				texture.m_colorA = CRTVector(colorAArray[0].GetDouble(), colorAArray[1].GetDouble(), colorAArray[2].GetDouble());
+				const auto& colorBArray = texJson["color_B"];
+				texture.m_colorB = CRTVector(colorBArray[0].GetDouble(), colorBArray[1].GetDouble(), colorBArray[2].GetDouble());
+				texture.m_squareSize = texJson["square_size"].GetDouble();
+			} else if (typeStr == "bitmap") {
+				texture.m_type = crt::TextureType::BITMAP;
+				const std::string resolvedPath = resolveResourcePath(texJson["file_path"].GetString());
+				if (!texture.loadBitmap(resolvedPath)) {
+					std::cerr << "Failed to load bitmap texture: " << resolvedPath << std::endl;
+				}
+			}
+			textureNameToIndex[texture.m_name] = static_cast<int>(scene.textures.size());
+			scene.textures.push_back(std::move(texture));
+		}
+	}
+
 	if (doc.HasMember("materials")) {
     const auto& mats = doc["materials"];
     for (rapidjson::SizeType i = 0; i < mats.Size(); ++i) {
@@ -162,11 +225,22 @@ bool loadScene(const std::string& path, Scene& scene) {
         double albedoValues[3] = {1.0, 1.0, 1.0};
 		bool smoothShadingFlag{false};
 		crt::MaterialType materialType = crt::MaterialType::DIFFUSE;
+		int textureIndex = -1;
         if (mat.HasMember("albedo")) {
-           	const auto& albedoArray = mat["albedo"];
-			albedoValues[0] = albedoArray[0].GetDouble();
-			albedoValues[1] = albedoArray[1].GetDouble();
-			albedoValues[2] = albedoArray[2].GetDouble();
+           	const auto& albedoValue = mat["albedo"];
+			if (albedoValue.IsString()) {
+				const std::string textureName = albedoValue.GetString();
+				const auto it = textureNameToIndex.find(textureName);
+				if (it != textureNameToIndex.end()) {
+					textureIndex = it->second;
+				} else {
+					std::cerr << "Unknown texture referenced by material: " << textureName << std::endl;
+				}
+			} else {
+				albedoValues[0] = albedoValue[0].GetDouble();
+				albedoValues[1] = albedoValue[1].GetDouble();
+				albedoValues[2] = albedoValue[2].GetDouble();
+			}
         }
         if (mat.HasMember("smooth_shading")) {
             smoothShadingFlag = mat["smooth_shading"].GetBool();
@@ -183,6 +257,7 @@ bool loadScene(const std::string& path, Scene& scene) {
 				}
 		}
 		crt::Material material(albedoValues, materialType, smoothShadingFlag);
+		material.m_textureIndex = textureIndex;
 
 		// If the material is refractive, check for index_of_refraction
 		if (materialType == crt::MaterialType::REFRACTIVE && mat.HasMember("ior")) {
@@ -222,6 +297,19 @@ bool loadScene(const std::string& path, Scene& scene) {
 				);
 			}
 
+			std::vector<CRTVector> uvs;
+			if (obj.HasMember("uvs")) {
+				const auto& uvsJson = obj["uvs"];
+				uvs.reserve(uvsJson.Size() / 3);
+				for (rapidjson::SizeType i = 0; i + 2 < uvsJson.Size(); i += 3) {
+					uvs.emplace_back(
+						uvsJson[i].GetDouble(),
+						uvsJson[i + 1].GetDouble(),
+						uvsJson[i + 2].GetDouble()
+					);
+				}
+			}
+
 			const auto& tri = obj["triangles"];
 			for (rapidjson::SizeType i = 0; i + 2 < tri.Size(); i += 3)
 			{
@@ -229,6 +317,10 @@ bool loadScene(const std::string& path, Scene& scene) {
 				const int i1 = tri[i + 1].GetInt();
 				const int i2 = tri[i + 2].GetInt();
 				newObject.m_triangles.emplace_back(vertices[i0], vertices[i1], vertices[i2]);
+				if (!uvs.empty())
+				{
+					newObject.m_triangles.back().setVertexUVs(uvs[i0], uvs[i1], uvs[i2]);
+				}
 				if (smoothShadingFlag)
 				{
 					crt::CRTVector faceNormal= newObject.m_triangles.back().getNormalVector();
@@ -340,7 +432,7 @@ int main(int argc, char** argv) {
 	}
 
 
-	std::filesystem::create_directories("output/homework11");
+	std::filesystem::create_directories("output/homework12");
 
 	for (const std::string& sceneFile : sceneFiles) {
 		const std::string resolvedSceneFile = resolveScenePath(sceneFile);
@@ -358,7 +450,7 @@ int main(int argc, char** argv) {
 			std::vector<CRTColor> pixels;
 			renderScene(scene, pixels);
 
-			const std::string outputPath = "output/homework11/" + scenePath.stem().string()
+			const std::string outputPath = "output/homework12/" + scenePath.stem().string()
 				+ ".ppm";
 			writePPM(outputPath, scene, pixels);
 
