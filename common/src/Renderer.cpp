@@ -1,4 +1,5 @@
 #include "raytracer/Renderer.h"
+#include <atomic>
 #include <limits>
 #include <thread>
 #include <iostream>
@@ -22,6 +23,10 @@ namespace crt
         for (size_t objIdx = 0; objIdx < scene.objects.size(); ++objIdx)
         {
             const Object &object = scene.objects[objIdx];
+            if (!object.m_boundingBox.intersects(ray))
+            {
+                continue;
+            }
 
             for (size_t triIdx = 0; triIdx < object.m_triangles.size(); ++triIdx)
             {
@@ -161,6 +166,10 @@ namespace crt
             {
                 continue;
             }
+            if (!object.m_boundingBox.intersects(shadowRay))
+            {
+                continue;
+            }
 
             for (const CRTTriangle &triangle : object.m_triangles)
             {
@@ -267,57 +276,81 @@ namespace crt
         return toCRTColor(traceRayRadiance(scene, ray, startRayDepth));
     }
 
-    void renderScene(const Scene &scene, std::vector<CRTColor> &pixels)
+    void renderRegion(const Scene &scene, std::vector<CRTColor> &pixels, int rowIdx, int colIdx, int rHeight, int rWidth)
     {
         constexpr int kSamplesPerPixel = 1;
         const double aspectRatio = static_cast<double>(scene.imageWidth) / static_cast<double>(scene.imageHeight);
+
+        // Per-region RNG so jitter doesn't need synchronization across regions.
+        std::mt19937 rng(static_cast<unsigned int>(rowIdx) * 9781u + static_cast<unsigned int>(colIdx) * 131u + 1u);
+        std::uniform_real_distribution<double> jitter(0.0, 1.0);
+
+        const int rowEnd = std::min(scene.imageHeight, rowIdx + rHeight);
+        const int colEnd = std::min(scene.imageWidth, colIdx + rWidth);
+
+        for (int row = rowIdx; row < rowEnd; ++row)
+        {
+            for (int col = colIdx; col < colEnd; ++col)
+            {
+                const int pixelIndex = row * scene.imageWidth + col;
+                Radiance accumulated{};
+                for (int sample = 0; sample < kSamplesPerPixel; ++sample)
+                {
+                    const double subX = jitter(rng);
+                    const double subY = jitter(rng);
+                    crt::Ray cameraRay = scene.camera.generateRayForPixel(
+                        col,
+                        row,
+                        scene.imageWidth,
+                        scene.imageHeight,
+                        aspectRatio,
+                        subX,
+                        subY);
+                    accumulated = accumulated + traceRayRadiance(scene, cameraRay, 0);
+                }
+                pixels[pixelIndex] = toCRTColor(accumulated.scaled(1.0 / kSamplesPerPixel));
+            }
+        }
+    }
+
+    void renderScene(const Scene &scene, std::vector<CRTColor> &pixels)
+    {
+        constexpr int kBucketSize = 8;
         pixels.assign(static_cast<size_t>(scene.imageWidth) * static_cast<size_t>(scene.imageHeight), scene.backgroundColor);
 
-        auto renderRows = [&](int rowStart, int rowEnd)
+        struct Bucket
         {
-            // Per-thread RNG so jitter doesn't need synchronization across rows.
-            std::mt19937 rng(static_cast<unsigned int>(rowStart) * 9781u + 1u);
-            std::uniform_real_distribution<double> jitter(0.0, 1.0);
-
-            for (int rowIdx = rowStart; rowIdx < rowEnd; ++rowIdx)
+            int rowIdx;
+            int colIdx;
+        };
+        std::vector<Bucket> buckets;
+        for (int rowIdx = 0; rowIdx < scene.imageHeight; rowIdx += kBucketSize)
+        {
+            for (int colIdx = 0; colIdx < scene.imageWidth; colIdx += kBucketSize)
             {
-                for (int colIdx = 0; colIdx < scene.imageWidth; ++colIdx)
-                {
+                buckets.push_back({rowIdx, colIdx});
+            }
+        }
 
-                    const int pixelIndex = rowIdx * scene.imageWidth + colIdx;
-                    Radiance accumulated{};
-                    for (int sample = 0; sample < kSamplesPerPixel; ++sample)
-                    {
-                        const double subX = jitter(rng);
-                        const double subY = jitter(rng);
-                        crt::Ray cameraRay = scene.camera.generateRayForPixel(
-                            colIdx,
-                            rowIdx,
-                            scene.imageWidth,
-                            scene.imageHeight,
-                            aspectRatio,
-                            subX,
-                            subY);
-                        accumulated = accumulated + traceRayRadiance(scene, cameraRay, 0);
-                    }
-                    pixels[pixelIndex] = toCRTColor(accumulated.scaled(1.0 / kSamplesPerPixel));
-                }
+        // Shared work queue so threads that finish cheap buckets (sky, background) pick up more work
+        // instead of sitting idle while another thread churns through an expensive bucket (reflections/refractions).
+        std::atomic<size_t> nextBucketIdx{0};
+        auto worker = [&]()
+        {
+            size_t bucketIdx;
+            while ((bucketIdx = nextBucketIdx.fetch_add(1, std::memory_order_relaxed)) < buckets.size())
+            {
+                const Bucket &bucket = buckets[bucketIdx];
+                renderRegion(scene, pixels, bucket.rowIdx, bucket.colIdx, kBucketSize, kBucketSize);
             }
         };
 
         const unsigned int threadCount = std::max(1u, std::thread::hardware_concurrency());
-        const int rowsPerThread = (scene.imageHeight + static_cast<int>(threadCount) - 1) / static_cast<int>(threadCount);
-
         std::vector<std::thread> threads;
+        threads.reserve(threadCount);
         for (unsigned int threadIdx = 0; threadIdx < threadCount; ++threadIdx)
         {
-            const int rowStart = static_cast<int>(threadIdx) * rowsPerThread;
-            const int rowEnd = std::min(scene.imageHeight, rowStart + rowsPerThread);
-            if (rowStart >= rowEnd)
-            {
-                break;
-            }
-            threads.emplace_back(renderRows, rowStart, rowEnd);
+            threads.emplace_back(worker);
         }
         for (std::thread &t : threads)
         {

@@ -4,6 +4,8 @@ add_library(raytracer_common STATIC
     src/Camera.cpp
     src/Renderer.cpp
     src/Texture.cpp
+    src/Object.cpp
+    src/AABB.cpp
 )
 target_include_directories(raytracer_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

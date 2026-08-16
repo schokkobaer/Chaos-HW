@@ -1,4 +1,5 @@
 #pragma once
+#include "raytracer/AABB.h"
 #include "raytracer/Vector.h"
 #include "raytracer/Triangle.h"
 #include <vector>
@@ -18,10 +19,14 @@ struct Object {
                 //Constructor do nothing, excpet for intializing the member variables
             }
         void calculateNormalsForSmoothShading( std::vector<CRTVector>& vertexNormals) const;
+
+        // Recomputes m_boundingBox from the current m_triangles; call after all triangles are added.
+        void computeBoundingBox();
         
     std::vector<CRTTriangle> m_triangles;
     int m_materialIndex;
     bool m_isEmissive;
+    AABB m_boundingBox;
    
 };
 

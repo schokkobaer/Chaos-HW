@@ -1,0 +1,60 @@
+Homework 13 - Optimization Report
+==================================
+
+Test scene: Scene/scene0.crtscene (1920x1080, 1 sample/pixel)
+Machine: single test machine, multithreaded across all hardware cores.
+
+1. Debug vs Release build
+--------------------------
+Same code, compiled with -g (Debug) vs -O3 -DNDEBUG (Release).
+  Debug render time:   212.9 s
+  Release render time:  69.7 s
+  -> Release is ~3.06x faster than Debug from compiler optimizations alone.
+All further tests below use the Release build.
+
+2. Static row-split vs bucket-based dynamic scheduling
+-------------------------------------------------------
+Replaced the fixed "each thread renders a contiguous row range" scheme with
+tile ("bucket") rendering: the image is split into fixed-size tiles and
+threads pull the next free tile from a shared atomic work-queue index.
+This balances load across threads even when ray cost is uneven across
+the image (e.g. reflective/refractive regions cost more than background).
+  Static row-split render time:  69.7 s
+  Bucket render time (32x32):    50.4 s
+  -> ~28% faster, no change in output image.
+
+3. Bucket size sweep
+----------------------
+Render time (Release) for different bucket sizes:
+  8   -> 51.2 s
+  16  -> 53.0 s
+  32  -> 62.0 s
+  64  -> 63.4 s
+  128 -> 63.1 s
+  256 -> 74.6 s
+Smaller buckets won on this scene (better load balancing granularity);
+kept bucket size = 8 going forward. Results were somewhat noisy run to
+run, but the trend of smaller buckets being faster was consistent.
+
+4. AABB (axis-aligned bounding box) pruning
+---------------------------------------------
+Added a bounding box per object (min/max over its triangle vertices) and
+a cheap ray/box slab test. Both the primary-ray closest-hit search and the
+shadow-ray occlusion search now skip an object's entire triangle list if
+the ray misses its bounding box first, instead of testing every triangle.
+  Bucket-only render time (bucket=8):  51.2 s
+  + AABB pruning render time:          18.8 s
+  -> ~2.7x faster on top of bucketing.
+
+Output image verified visually correct and unchanged in size/format after
+each optimization step.
+
+Summary
+--------
+  Original (Debug):                          212.9 s
+  Release build:                               69.7 s
+  + bucket-based dynamic scheduling:           50.4 s (bucket=32)
+  + smaller bucket size (8):                   51.2 s (comparable, noisy)
+  + AABB pruning:                              18.8 s
+  Overall speed-up vs Debug baseline:        ~11.3x
+  Overall speed-up vs Release baseline:       ~3.7x
