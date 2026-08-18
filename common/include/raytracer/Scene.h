@@ -21,6 +21,7 @@ namespace crt
         std::vector<Object> objects;
         std::vector<crt::Material> materials;
         std::vector<crt::Texture> textures;
+        int environmentTextureIndex = -1; // index into textures; -1 means use the procedural sky gradient
         AccelerationTree accelerationTree;
     };
 

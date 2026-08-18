@@ -200,6 +200,42 @@ namespace crt
         return (sceneLight.getIntensity() / sphereArea) * cosLaw;
     }
 
+    // Procedural sky gradient for escaped rays: pale near the horizon, blue at the zenith,
+    // blended by the ray's vertical direction component. Replaces the old flat
+    // scene.backgroundColor fill (still used elsewhere as the pixel buffer's initial value).
+    Radiance skyRadiance(const CRTVector &direction)
+    {
+        // Scaled up from the "natural" (1,1,1)/(0.5,0.7,1.0) RTIOW values - toCRTColor's
+        // Reinhard tonemap (x/(x+1)) maps raw 1.0 to only mid-gray (127/255), so unscaled
+        // sky colors render as a dull haze rather than sky.
+        const Radiance horizonColor{4.5, 4.5, 4.5};
+        const Radiance zenithColor{1.2, 2.6, 5.0};
+        const double t = 0.5 * (direction.normalized().y + 1.0);
+        return horizonColor.scaled(1.0 - t) + zenithColor.scaled(t);
+    }
+
+    // Equirectangular (lat-long) sample of scene.environmentTextureIndex if one is set, falling
+    // back to skyRadiance's procedural gradient otherwise - so scenes without an environment_map
+    // keep rendering exactly as before.
+    Radiance environmentRadiance(const Scene &scene, const CRTVector &direction)
+    {
+        if (scene.environmentTextureIndex < 0 || scene.environmentTextureIndex >= static_cast<int>(scene.textures.size()))
+        {
+            return skyRadiance(direction);
+        }
+
+        const CRTVector d = direction.normalized();
+        const double u = 0.5 + std::atan2(d.x, d.z) / (2.0 * std::numbers::pi_v<double>);
+        const double v = 0.5 + std::asin(std::clamp(d.y, -1.0, 1.0)) / std::numbers::pi_v<double>;
+
+        // sampleHDR returns true linear radiance (not gamma-encoded/clamped to 0..1), so it
+        // composes correctly with attenuation from reflections/refractions and needs no
+        // correction here - it goes through the same single Reinhard tonemap as everything
+        // else, exactly once, at the very end of the pipeline.
+        const CRTVector color = scene.textures[scene.environmentTextureIndex].sampleHDR(u, v);
+        return Radiance{color.x, color.y, color.z};
+    }
+
     Radiance traceRayRadiance(const Scene &scene, Ray &ray, int startRayDepth)
     {
         Radiance outputColor{};
@@ -211,7 +247,7 @@ namespace crt
             if (!findClosestHitViaTree(scene, ray, hit))
             {
                 // Ray escaped to background — apply accumulated attenuation
-                outputColor = outputColor + toRadiance(scene.backgroundColor) * attenuation;
+                outputColor = outputColor + environmentRadiance(scene, ray.direction) * attenuation;
                 return outputColor;
             }
 
@@ -294,7 +330,7 @@ namespace crt
 
     void renderRegion(const Scene &scene, std::vector<CRTColor> &pixels, int rowIdx, int colIdx, int rHeight, int rWidth)
     {
-        constexpr int kSamplesPerPixel = 1;
+        constexpr int kSamplesPerPixel = 8;
         const double aspectRatio = static_cast<double>(scene.imageWidth) / static_cast<double>(scene.imageHeight);
 
         // Per-region RNG so jitter doesn't need synchronization across regions.

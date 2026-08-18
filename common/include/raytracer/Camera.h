@@ -13,6 +13,9 @@ struct Camera {
     CRTVector forward{0, 0, -1};
     CRTVector right{1, 0, 0};
     CRTVector up{0, 1, 0};
+    // Vertical field of view; horizontal follows from the image aspect ratio. 90 reproduces
+    // the old fixed behavior exactly (xScreen/yScreen in [-1,1] map 1:1 to right/up).
+    double fovYDegrees = 90.0;
 
     Camera() = default;
 

@@ -1,5 +1,7 @@
 #include "raytracer/Camera.h"
 #include "raytracer/Camera.h"
+#include <cmath>
+#include <numbers>
 
 namespace crt {
 
@@ -58,7 +60,9 @@ void Camera::roll(double angleRad) {
 }
 
 Ray Camera::generateRay(double xScreen, double yScreen) const {
-    CRTVector dir = (forward + right * xScreen + up * yScreen).normalized();
+    const double fovYRadians = fovYDegrees * (std::numbers::pi_v<double> / 180.0);
+    const double tanHalfFov = std::tan(fovYRadians * 0.5);
+    CRTVector dir = (forward + right * (xScreen * tanHalfFov) + up * (yScreen * tanHalfFov)).normalized();
     return Ray(origin, dir);
 }
 

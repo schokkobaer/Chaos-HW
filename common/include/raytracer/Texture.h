@@ -37,10 +37,21 @@ public:
     // uvU/uvV are interpolated per-vertex uvs; baryU/baryV/baryW are the triangle-hit barycentric coordinates.
     CRTVector sample(double uvU, double uvV, double baryU, double baryV, double baryW) const;
 
+    // Environment-map variant: loads true linear HDR radiance (not gamma-encoded/clamped to
+    // 0..1 like loadBitmap) via stb's float loader. Used for background/environment maps, whose
+    // values need to compose naturally with the rest of the HDR lighting pipeline instead of
+    // being a pre-tonemapped, display-ready image.
+    bool loadBitmapHDR(const std::string& filePath);
+    CRTVector sampleHDR(double uvU, double uvV) const;
+
 private:
     int m_bitmapWidth = 0;
     int m_bitmapHeight = 0;
     std::vector<unsigned char> m_bitmapPixels; // RGB, 3 bytes per pixel, row-major top-to-bottom
+
+    int m_hdrWidth = 0;
+    int m_hdrHeight = 0;
+    std::vector<float> m_hdrPixels; // RGB, linear radiance, row-major top-to-bottom
 };
 
 } // namespace crt

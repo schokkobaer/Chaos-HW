@@ -68,4 +68,35 @@ CRTVector Texture::sample(double uvU, double uvV, double baryU, double baryV, do
     return m_albedo;
 }
 
+bool Texture::loadBitmapHDR(const std::string& filePath) {
+    int channelsInFile = 0;
+    float* pixels = stbi_loadf(filePath.c_str(), &m_hdrWidth, &m_hdrHeight, &channelsInFile, 3);
+    if (!pixels) {
+        m_hdrWidth = 0;
+        m_hdrHeight = 0;
+        return false;
+    }
+    m_hdrPixels.assign(pixels, pixels + static_cast<size_t>(m_hdrWidth) * m_hdrHeight * 3);
+    stbi_image_free(pixels);
+    return true;
+}
+
+CRTVector Texture::sampleHDR(double uvU, double uvV) const {
+    if (m_hdrWidth <= 0 || m_hdrHeight <= 0) {
+        return CRTVector(1.0, 0.0, 1.0); // magenta fallback for a failed/missing load
+    }
+    const double wrappedU = wrapToUnitInterval(uvU);
+    const double wrappedV = wrapToUnitInterval(uvV);
+    int col = static_cast<int>(wrappedU * m_hdrWidth);
+    int row = static_cast<int>((1.0 - wrappedV) * m_hdrHeight);
+    col = std::clamp(col, 0, m_hdrWidth - 1);
+    row = std::clamp(row, 0, m_hdrHeight - 1);
+    const size_t pixelIndex = (static_cast<size_t>(row) * m_hdrWidth + col) * 3;
+    return CRTVector(
+        m_hdrPixels[pixelIndex + 0],
+        m_hdrPixels[pixelIndex + 1],
+        m_hdrPixels[pixelIndex + 2]
+    );
+}
+
 } // namespace crt
