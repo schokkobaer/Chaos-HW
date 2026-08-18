@@ -40,7 +40,8 @@ struct CRTTriangle {
     CRTVector v0, v1, v2;
     CRTVector n0, n1, n2; // Vertex normals for smooth shading
     CRTVector uv0, uv1, uv2; // Vertex texture coordinates (z unused)
-    int colorIndex = 0;
+    int objectIndex = 0;
+    bool castsShadow = true; // false for emissive/refractive owners; set at flatten time
 
     CRTTriangle(const CRTVector& v0, const CRTVector& v1, const CRTVector& v2 )
         : v0(v0), v1(v1), v2(v2) {}

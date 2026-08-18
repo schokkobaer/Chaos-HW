@@ -77,6 +77,44 @@ namespace crt
         return true;
     }
 
+    // Same job as findClosestHit, but searches scene.accelerationTree instead of walking
+    // scene.objects directly. Kept separate so findClosestHit (and everything that calls it)
+    // is untouched until this is verified to produce the same results.
+    bool findClosestHitViaTree(const Scene &scene, const Ray &ray, HitRecord &hit)
+    {
+        const std::optional<AccelerationHit> accHit = scene.accelerationTree.intersectClosest(ray);
+        if (!accHit.has_value())
+        {
+            return false;
+        }
+
+        const CRTTriangle &triangle = accHit->triangle;
+        bool localIsSmoothShadingUsed = false;
+        const int matIdx = scene.objects[triangle.objectIndex].m_materialIndex;
+        if (matIdx >= 0 && matIdx < static_cast<int>(scene.materials.size()))
+        {
+            localIsSmoothShadingUsed = scene.materials[matIdx].m_smoothShading;
+        }
+
+        hit.t = accHit->t;
+        hit.position = ray.origin + ray.direction * accHit->t;
+        if (localIsSmoothShadingUsed)
+        {
+            CRTVector interpolatedNormal = triangle.n0 * (1.0 - accHit->u - accHit->v) + triangle.n1 * accHit->u + triangle.n2 * accHit->v;
+            hit.normal = interpolatedNormal.normalized();
+        }
+        else
+        {
+            hit.normal = triangle.normal();
+        }
+        hit.u = accHit->u;
+        hit.v = accHit->v;
+        hit.texU = triangle.uv0.x * (1.0 - accHit->u - accHit->v) + triangle.uv1.x * accHit->u + triangle.uv2.x * accHit->v;
+        hit.texV = triangle.uv0.y * (1.0 - accHit->u - accHit->v) + triangle.uv1.y * accHit->u + triangle.uv2.y * accHit->v;
+        hit.objectIndex = static_cast<size_t>(triangle.objectIndex);
+        return true;
+    }
+
     // Resolves a material's color at a hit point, sampling its texture if one is referenced.
     CRTVector resolveAlbedo(const Scene &scene, const Material &material, const HitRecord &hit)
     {
@@ -153,32 +191,10 @@ namespace crt
         }
 
         const Ray shadowRay(hit.position + lightDir * kShadowEpsilon, lightDir);
-        for (const Object &object : scene.objects)
+        // Emissive/refractive owners are filtered via CRTTriangle::castsShadow, set at flatten time.
+        if (scene.accelerationTree.intersectAny(shadowRay, distanceToLight - kShadowEpsilon))
         {
-            if (object.m_isEmissive)
-            {
-                continue;
-            }
-            // NEW: glass is transparent to shadow rays (no caustics, but no black shadow either)
-            if (object.m_materialIndex >= 0 &&
-                object.m_materialIndex < static_cast<int>(scene.materials.size()) &&
-                scene.materials[object.m_materialIndex].m_type == MaterialType::REFRACTIVE)
-            {
-                continue;
-            }
-            if (!object.m_boundingBox.intersects(shadowRay))
-            {
-                continue;
-            }
-
-            for (const CRTTriangle &triangle : object.m_triangles)
-            {
-                const std::optional<crt::TriangleHit> shadowHit = triangle.intersect(shadowRay);
-                if (shadowHit.has_value() && shadowHit->t < distanceToLight - kShadowEpsilon)
-                {
-                    return 0.0;
-                }
-            }
+            return 0.0;
         }
         const double sphereArea = 4.0 * kPi * distanceToLight * distanceToLight;
         return (sceneLight.getIntensity() / sphereArea) * cosLaw;
@@ -192,7 +208,7 @@ namespace crt
         {
 
             HitRecord hit;
-            if (!findClosestHit(scene, ray, hit))
+            if (!findClosestHitViaTree(scene, ray, hit))
             {
                 // Ray escaped to background — apply accumulated attenuation
                 outputColor = outputColor + toRadiance(scene.backgroundColor) * attenuation;

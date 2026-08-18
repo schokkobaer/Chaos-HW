@@ -6,6 +6,7 @@ add_library(raytracer_common STATIC
     src/Texture.cpp
     src/Object.cpp
     src/AABB.cpp
+    src/AccelerationTree.cpp
 )
 target_include_directories(raytracer_common PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include

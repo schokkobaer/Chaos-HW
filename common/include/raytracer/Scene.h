@@ -7,6 +7,7 @@
 #include "raytracer/Object.h"
 #include "raytracer/Material.h"
 #include "raytracer/Texture.h"
+#include "AccelerationTree.h"
 
 namespace crt
 {
@@ -20,6 +21,7 @@ namespace crt
         std::vector<Object> objects;
         std::vector<crt::Material> materials;
         std::vector<crt::Texture> textures;
+        AccelerationTree accelerationTree;
     };
 
     struct HitRecord

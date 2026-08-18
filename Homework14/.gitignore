@@ -1,0 +1,13 @@
+*.pdf
+.vscode/
+build/
+build-debug/
+build-release/
+*/lessons/
+*/learning-records/
+*/references/
+*/reference/
+output/
+*.md
+*.css
+

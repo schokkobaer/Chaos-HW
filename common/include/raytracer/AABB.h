@@ -3,6 +3,7 @@
 #include "raytracer/Ray.h"
 #include "raytracer/Vector.h"
 #include <limits>
+#include <utility>
 
 namespace crt {
 
@@ -16,6 +17,12 @@ struct AABB {
 
     // Slab-method ray/box test; only answers whether the ray hits the box, not where.
     bool intersects(const Ray& ray) const;
+
+    // Splits the box into two halves at its midpoint along the given axis (0=x, 1=y, 2=z).
+    std::pair<AABB, AABB> split(int axis) const;
+
+    // Box/box overlap test (not ray/box) — used to decide which child box(es) a triangle falls into.
+    bool overlaps(const AABB& other) const;
 };
 
 } // namespace crt

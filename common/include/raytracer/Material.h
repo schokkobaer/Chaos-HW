@@ -20,6 +20,7 @@ namespace crt {
     MaterialType m_type=MaterialType::DIFFUSE;
     bool m_smoothShading=false;
     int m_textureIndex = -1; // index into Scene::textures; -1 means use m_albedo directly
+    
     void setIndexOfRefraction(double indexOfRefraction) 
     {
         m_indexOfRefractionWasSet = true;
