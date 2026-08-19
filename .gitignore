@@ -10,4 +10,5 @@ build-release/
 output/
 *.md
 *.css
+__pycache__/
 

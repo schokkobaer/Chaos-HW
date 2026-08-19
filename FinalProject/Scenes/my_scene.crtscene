@@ -15,7 +15,7 @@
     {
       "name": "sky",
       "type": "bitmap",
-      "file_path": "/home/ckai/Downloads/overcast_soil_puresky_4k.hdr"
+      "file_path": "Textures/overcast_soil_puresky_4k.hdr"
     }
   ],
   "camera": {

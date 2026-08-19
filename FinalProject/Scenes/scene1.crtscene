@@ -13,7 +13,7 @@
 		{
 			"name": "sky",
 			"type": "bitmap",
-			"file_path": "texture/overcast_soil_puresky_4k.hdr"
+			"file_path": "Textures/overcast_soil_puresky_4k.hdr"
 		}
 	],
 

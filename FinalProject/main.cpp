@@ -8,10 +8,8 @@
 #include <numbers>
 #include <sstream>
 #include <string>
-#include <thread>
 #include <unordered_map>
 #include <vector>
-#include<limits> //For std::numeric_limits
 #include "raytracer/Scene.h"
 #include "raytracer/Renderer.h"
 #include "rapidjson/document.h"
@@ -29,11 +27,7 @@ using crt::Object;
 using crt::Scene;
 using crt::HitRecord;
 
-constexpr double kShadowEpsilon = 1e-6;
-
-
-
-static CRTColor colorFromUnitFloats(const rapidjson::Value& arr) 
+CRTColor colorFromUnitFloats(const rapidjson::Value& arr)
 {
 	auto clamp255 = [](double c) {
 		const int v = static_cast<int>(std::round(c * 255.0));
@@ -42,9 +36,9 @@ static CRTColor colorFromUnitFloats(const rapidjson::Value& arr)
 	return CRTColor(clamp255(arr[0].GetDouble()), clamp255(arr[1].GetDouble()), clamp255(arr[2].GetDouble()));
 }
 
-static const CRTColor kLightColor(255, 230, 40);
-
-// Resolves scene resource paths (e.g. bitmap texture files) that are given relative to the finalProject folder.
+// Resolves scene resource paths (e.g. bitmap texture files) that are given relative to the
+// FinalProject folder, regardless of whether the binary is run from the repo root or its own
+// build directory.
 std::string resolveResourcePath(const std::string& relativePath) {
 	const std::filesystem::path absoluteCandidate(relativePath);
 	if (absoluteCandidate.is_absolute() && std::filesystem::exists(absoluteCandidate)) {
@@ -61,9 +55,9 @@ std::string resolveResourcePath(const std::string& relativePath) {
 	}
 
 	const std::vector<std::filesystem::path> candidates = {
-		std::filesystem::path("finalProject") / input,
-		std::filesystem::path("../finalProject") / input,
-		std::filesystem::path("../../finalProject") / input,
+		std::filesystem::path("FinalProject") / input,
+		std::filesystem::path("../FinalProject") / input,
+		std::filesystem::path("../../FinalProject") / input,
 	};
 	for (const auto& candidate : candidates) {
 		if (std::filesystem::exists(candidate)) {
@@ -111,19 +105,6 @@ void appendSphereMesh(crt::Object& emptyLightObject,  const CRTVector& center, d
 	}
 	return;
 }
-
-void addLightSpheres(Scene& scene, double radius = 0.14, int stacks = 14, int slices = 24)
-{
-	scene.objects.reserve(scene.objects.size() + scene.lights.size());
-	for (const CRTLight& sceneLight : scene.lights) 
-	{
-		Object& lightObject = scene.objects.emplace_back();
-		lightObject.m_isEmissive = true;
-		appendSphereMesh(lightObject, sceneLight.getPosition(), radius, stacks, slices);
-		lightObject.computeBoundingBox();
-	}
-}
-
 
 bool loadScene(const std::string& path, Scene& scene) {
 	std::ifstream fileStream(path);
@@ -254,54 +235,53 @@ bool loadScene(const std::string& path, Scene& scene) {
 	}
 
 	if (doc.HasMember("materials")) {
-    const auto& mats = doc["materials"];
-    for (rapidjson::SizeType i = 0; i < mats.Size(); ++i) {
-        const auto& mat = mats[i];
-        double albedoValues[3] = {1.0, 1.0, 1.0};
-		bool smoothShadingFlag{false};
-		crt::MaterialType materialType = crt::MaterialType::DIFFUSE;
-		int textureIndex = -1;
-        if (mat.HasMember("albedo")) {
-           	const auto& albedoValue = mat["albedo"];
-			if (albedoValue.IsString()) {
-				const std::string textureName = albedoValue.GetString();
-				const auto it = textureNameToIndex.find(textureName);
-				if (it != textureNameToIndex.end()) {
-					textureIndex = it->second;
+		const auto& mats = doc["materials"];
+		for (rapidjson::SizeType i = 0; i < mats.Size(); ++i) {
+			const auto& mat = mats[i];
+			double albedoValues[3] = {1.0, 1.0, 1.0};
+			bool smoothShadingFlag{false};
+			crt::MaterialType materialType = crt::MaterialType::DIFFUSE;
+			int textureIndex = -1;
+			if (mat.HasMember("albedo")) {
+				const auto& albedoValue = mat["albedo"];
+				if (albedoValue.IsString()) {
+					const std::string textureName = albedoValue.GetString();
+					const auto it = textureNameToIndex.find(textureName);
+					if (it != textureNameToIndex.end()) {
+						textureIndex = it->second;
+					} else {
+						std::cerr << "Unknown texture referenced by material: " << textureName << std::endl;
+					}
 				} else {
-					std::cerr << "Unknown texture referenced by material: " << textureName << std::endl;
+					albedoValues[0] = albedoValue[0].GetDouble();
+					albedoValues[1] = albedoValue[1].GetDouble();
+					albedoValues[2] = albedoValue[2].GetDouble();
 				}
-			} else {
-				albedoValues[0] = albedoValue[0].GetDouble();
-				albedoValues[1] = albedoValue[1].GetDouble();
-				albedoValues[2] = albedoValue[2].GetDouble();
 			}
-        }
-        if (mat.HasMember("smooth_shading")) {
-            smoothShadingFlag = mat["smooth_shading"].GetBool();
-        }
-		if (mat.HasMember("type")) {
-			    const std::string typeStr = mat["type"].GetString();
+			if (mat.HasMember("smooth_shading")) {
+				smoothShadingFlag = mat["smooth_shading"].GetBool();
+			}
+			if (mat.HasMember("type")) {
+				const std::string typeStr = mat["type"].GetString();
 				if (typeStr == "diffuse") {
 					materialType = crt::MaterialType::DIFFUSE;
 				} else if (typeStr == "reflective") {
 					materialType = crt::MaterialType::REFLECTIVE;
 				} else if (typeStr == "refractive") {
 					materialType = crt::MaterialType::REFRACTIVE;
-
 				}
-		}
-		crt::Material material(albedoValues, materialType, smoothShadingFlag);
-		material.m_textureIndex = textureIndex;
+			}
+			crt::Material material(albedoValues, materialType, smoothShadingFlag);
+			material.m_textureIndex = textureIndex;
 
-		// If the material is refractive, check for index_of_refraction
-		if (materialType == crt::MaterialType::REFRACTIVE && mat.HasMember("ior")) {
-			double indexOfRefraction = mat["ior"].GetDouble();
-			material.setIndexOfRefraction(indexOfRefraction);
+			// If the material is refractive, check for index_of_refraction
+			if (materialType == crt::MaterialType::REFRACTIVE && mat.HasMember("ior")) {
+				double indexOfRefraction = mat["ior"].GetDouble();
+				material.setIndexOfRefraction(indexOfRefraction);
+			}
+
+			scene.materials.push_back(material);
 		}
-		
-        scene.materials.push_back(material);
-    }
 	}
 	if (doc.HasMember("objects")) {
 		const auto& objects = doc["objects"];
@@ -313,11 +293,11 @@ bool loadScene(const std::string& path, Scene& scene) {
 				newObject.m_materialIndex = materialIndex;
 			}
 			bool smoothShadingFlag = false;
-			if(newObject.m_materialIndex>=0 &&scene.materials[newObject.m_materialIndex].m_smoothShading)
+			if (newObject.m_materialIndex >= 0 && scene.materials[newObject.m_materialIndex].m_smoothShading)
 			{
 				smoothShadingFlag = true;
 			}
-			
+
 			std::vector<CRTVector> vertices;
 			const auto& verts = obj["vertices"];
 			vertices.reserve(verts.Size() / 3);
@@ -358,7 +338,7 @@ bool loadScene(const std::string& path, Scene& scene) {
 				}
 				if (smoothShadingFlag)
 				{
-					crt::CRTVector faceNormal= newObject.m_triangles.back().getNormalVector();
+					crt::CRTVector faceNormal = newObject.m_triangles.back().getNormalVector();
 					vertexNormals[i0] = vertexNormals[i0] + faceNormal;
 					vertexNormals[i1] = vertexNormals[i1] + faceNormal;
 					vertexNormals[i2] = vertexNormals[i2] + faceNormal;
@@ -371,7 +351,7 @@ bool loadScene(const std::string& path, Scene& scene) {
 				{
 					normal = normal.normalized();
 				}
-				//Assigning the computed vertices to the triangles for smooth shading.
+				// Assigning the computed vertices to the triangles for smooth shading.
 				for (rapidjson::SizeType i = 0; i + 2 < tri.Size(); i += 3)
 				{
 					const int i0 = tri[i].GetInt();
@@ -385,20 +365,7 @@ bool loadScene(const std::string& path, Scene& scene) {
 		}
 	}
 
-	//addLightSpheres(scene);
 	return true;
-}
-
-bool smoothShadingMaterialIsUsed(const Scene& scene) {
-	for (const Object& obj : scene.objects) {
-		if (obj.m_materialIndex >= 0 && obj.m_materialIndex < static_cast<int>(scene.materials.size())) {
-			const crt::Material& material = scene.materials[obj.m_materialIndex];
-			if (material.m_smoothShading) {
-				return true;
-			}
-		}
-	}
-	return false;
 }
 
 // Flattens every object's triangles into a single list for the acceleration tree, tagging
@@ -711,6 +678,8 @@ void renderKnownOrbitClip(const std::string& sceneStem, Scene& scene) {
 	}
 }
 
+// Resolves a scene file argument against the FinalProject/Scenes folder, regardless of whether
+// the binary is run from the repo root or its own build directory.
 std::string resolveScenePath(const std::string& sceneFile) {
 	const std::filesystem::path input(sceneFile);
 	if (input.is_absolute() && std::filesystem::exists(input)) {
@@ -719,9 +688,9 @@ std::string resolveScenePath(const std::string& sceneFile) {
 
 	const std::vector<std::filesystem::path> candidates = {
 		input,
-		std::filesystem::path("Homework8") / input,
-		std::filesystem::path("../Homework8") / input,
-		std::filesystem::path("../../Homework8") / input,
+		std::filesystem::path("FinalProject/Scenes") / input,
+		std::filesystem::path("../FinalProject/Scenes") / input,
+		std::filesystem::path("../../FinalProject/Scenes") / input,
 	};
 
 	for (const auto& candidate : candidates) {
@@ -742,9 +711,8 @@ int main(int argc, char** argv) {
 			sceneFiles.emplace_back(argv[i]);
 		}
 	} else {
-		sceneFiles = {"/home/ckai/Learning/C++_Chaos/RayTracing/Homework/Homework11/Scenes/homework11_scene2.crtscene"};
+		sceneFiles = {"scene1.crtscene"};
 	}
-
 
 #if defined(NDEBUG)
 	constexpr const char* kBuildConfig = "Release (NDEBUG defined)";
