@@ -17,9 +17,32 @@ namespace crt {
 
 namespace {
 
+constexpr double kPi = std::numbers::pi_v<double>;
+constexpr double kTwoPi = 2.0 * kPi;
+
+double halfTanFov(double degrees)
+{
+	return std::tan(degrees * (kPi / 180.0) * 0.5);
+}
+
+// The dolly-zoom ("vertigo") invariant: distance * tan(fov/2) stays constant, so the subject's
+// apparent size on screen is unchanged while the camera moves and FOV changes - only the
+// background's perspective (compression/stretching) changes. This is the actual Hitchcock
+// "Vertigo" effect, not just an arbitrary simultaneous move+zoom.
+double dollyZoomDistanceForFov(double referenceDistance, double referenceFovDegrees, double targetFovDegrees)
+{
+	return referenceDistance * halfTanFov(referenceFovDegrees) / halfTanFov(targetFovDegrees);
+}
+
+// Inverse of dollyZoomDistanceForFov: solves for the FOV that reaches targetDistance under the
+// same distance*tan(fov/2) invariant.
+double dollyZoomFovForDistance(double referenceDistance, double referenceFovDegrees, double targetDistance)
+{
+	return 2.0 * std::atan(referenceDistance * halfTanFov(referenceFovDegrees) / targetDistance) * (180.0 / kPi);
+}
+
 void appendSphereMesh(Object &emptyLightObject, const CRTVector &center, double radius, int stacks, int slices)
 {
-	constexpr double pi = std::numbers::pi_v<double>;
 	emptyLightObject.m_triangles.reserve(2 * slices * (stacks - 1));
 	auto spherePoint = [&](double theta, double phi)
 	{
@@ -32,13 +55,13 @@ void appendSphereMesh(Object &emptyLightObject, const CRTVector &center, double 
 
 	for (int stack = 0; stack < stacks; ++stack)
 	{
-		const double theta0 = pi * static_cast<double>(stack) / static_cast<double>(stacks);
-		const double theta1 = pi * static_cast<double>(stack + 1) / static_cast<double>(stacks);
+		const double theta0 = kPi * static_cast<double>(stack) / static_cast<double>(stacks);
+		const double theta1 = kPi * static_cast<double>(stack + 1) / static_cast<double>(stacks);
 
 		for (int slice = 0; slice < slices; ++slice)
 		{
-			const double phi0 = 2.0 * pi * static_cast<double>(slice) / static_cast<double>(slices);
-			const double phi1 = 2.0 * pi * static_cast<double>(slice + 1) / static_cast<double>(slices);
+			const double phi0 = kTwoPi * static_cast<double>(slice) / static_cast<double>(slices);
+			const double phi1 = kTwoPi * static_cast<double>(slice + 1) / static_cast<double>(slices);
 
 			const CRTVector p00 = spherePoint(theta0, phi0);
 			const CRTVector p01 = spherePoint(theta0, phi1);
@@ -56,6 +79,35 @@ void appendSphereMesh(Object &emptyLightObject, const CRTVector &center, double 
 		}
 	}
 	return;
+}
+
+// Adds a refractive glass sphere (radius, centered at `center`) to the scene as new geometry
+// and rebuilds scene.accelerationTree to include it.
+//
+// Vertex normals are set explicitly below - appendSphereMesh doesn't compute them, so they'd
+// otherwise default to (0,0,0). With smooth_shading enabled that zero normal normalizes to NaN,
+// which silently poisons every ray hitting the sphere: no error, no visible artifact, just an
+// object that's geometrically present and correctly intersected yet invisible in the render.
+void addGlassSphereToScene(Scene &scene, const CRTVector &center, double radius)
+{
+	Object &glassObject = scene.objects.emplace_back();
+	double glassAlbedo[3] = {1.0, 1.0, 1.0};
+	Material glassMaterial(glassAlbedo, MaterialType::REFRACTIVE, true);
+	glassMaterial.setIndexOfRefraction(1.5);
+	glassObject.m_materialIndex = static_cast<int>(scene.materials.size());
+	scene.materials.push_back(glassMaterial);
+
+	appendSphereMesh(glassObject, center, radius, 24, 32);
+	for (CRTTriangle &triangle : glassObject.m_triangles)
+	{
+		triangle.setVertexNormals(
+			(triangle.v0 - center).normalized(),
+			(triangle.v1 - center).normalized(),
+			(triangle.v2 - center).normalized());
+	}
+	glassObject.computeBoundingBox();
+
+	scene.accelerationTree = AccelerationTree::build(flattenTriangles(scene));
 }
 
 // Renders one frame of the current scene.camera state to outputDir/baseName_NNNN.ppm.
@@ -86,7 +138,6 @@ void renderOrbitClip(Scene &scene, const CRTVector &pivot, int frameCount, const
 
 	const Camera originalCamera = scene.camera;
 	const CRTVector offset = originalCamera.origin - pivot;
-	constexpr double kTwoPi = 2.0 * std::numbers::pi_v<double>;
 
 	double totalRenderSeconds = 0.0;
 	for (int frame = 0; frame < frameCount; ++frame)
@@ -122,16 +173,11 @@ void renderGlassRevealVertigoOrbitClip(
 	const std::string &outputDir, const std::string &baseName)
 {
 	std::filesystem::create_directories(outputDir);
-	constexpr double kPi = std::numbers::pi_v<double>;
-	constexpr double kTwoPi = 2.0 * kPi;
-	auto halfTanFov = [](double degrees)
-	{ return std::tan(degrees * (kPi / 180.0) * 0.5); };
 
 	const Camera originalCamera = scene.camera;
 	const CRTVector initialOffset = originalCamera.origin - pivot;
 	const double initialDistance = initialOffset.length();
 	const CRTVector direction = initialOffset.normalized();
-	const double startHalfTan = halfTanFov(fovStartDegrees);
 
 	const int totalFrames = glassFrames + dollyFrames + orbitFrames;
 	double totalRenderSeconds = 0.0;
@@ -140,28 +186,7 @@ void renderGlassRevealVertigoOrbitClip(
 	// --- Phase 0 setup: add the glass sphere and rebuild the tree to include it ---
 	const double sphereCenterDistance = initialDistance - glassSphereDistanceFromStart;
 	const CRTVector sphereCenter = pivot + direction * sphereCenterDistance;
-	{
-		Object &glassObject = scene.objects.emplace_back();
-		double glassAlbedo[3] = {1.0, 1.0, 1.0};
-		// smooth_shading=true requires real vertex normals below - appendSphereMesh doesn't set
-		// them (they default to (0,0,0)), which previously produced a NaN-normalized normal on
-		// every hit; that NaN silently poisoned the ray with no visible artifact at all, making
-		// the sphere invisible despite being geometrically present and correctly intersected.
-		Material glassMaterial(glassAlbedo, MaterialType::REFRACTIVE, true);
-		glassMaterial.setIndexOfRefraction(1.5);
-		glassObject.m_materialIndex = static_cast<int>(scene.materials.size());
-		scene.materials.push_back(glassMaterial);
-		appendSphereMesh(glassObject, sphereCenter, glassSphereRadius, 24, 32);
-		for (CRTTriangle &triangle : glassObject.m_triangles)
-		{
-			triangle.setVertexNormals(
-				(triangle.v0 - sphereCenter).normalized(),
-				(triangle.v1 - sphereCenter).normalized(),
-				(triangle.v2 - sphereCenter).normalized());
-		}
-		glassObject.computeBoundingBox();
-	}
-	scene.accelerationTree = AccelerationTree::build(flattenTriangles(scene));
+	addGlassSphereToScene(scene, sphereCenter, glassSphereRadius);
 
 	// --- Phase 0: straight-line travel from the start position to just past the sphere ---
 	const double glassEndDistance = sphereCenterDistance - glassSphereRadius * 1.5;
@@ -184,7 +209,7 @@ void renderGlassRevealVertigoOrbitClip(
 	// extreme FOV alone reads as disorienting even at a "safe" distance). Take whichever is hit
 	// first - i.e. the smaller, less extreme fovEnd - since fovStartDegrees varies per call and
 	// the distance needed to reach targetMinDistance isn't the same swing every time.
-	const double fovEndFromDistance = 2.0 * std::atan(vertigoStartDistance * startHalfTan / targetMinDistance) * (180.0 / kPi);
+	const double fovEndFromDistance = dollyZoomFovForDistance(vertigoStartDistance, fovStartDegrees, targetMinDistance);
 	const double fovEndDegrees = std::min(fovEndFromDistance, maxFovDegrees);
 
 	double finalDistance = vertigoStartDistance;
@@ -192,7 +217,7 @@ void renderGlassRevealVertigoOrbitClip(
 	{
 		const double t = dollyFrames > 1 ? static_cast<double>(i) / (dollyFrames - 1) : 1.0;
 		const double fov = fovStartDegrees + (fovEndDegrees - fovStartDegrees) * t;
-		const double distance = vertigoStartDistance * startHalfTan / halfTanFov(fov);
+		const double distance = dollyZoomDistanceForFov(vertigoStartDistance, fovStartDegrees, fov);
 		finalDistance = distance;
 
 		const CRTVector newOrigin = pivot + direction * distance;
@@ -247,12 +272,23 @@ void renderKnownOrbitClip(const std::string &sceneStem, Scene &scene)
 		// object 1 is the dragon mesh (object 0 is the ground plane).
 		const CRTVector dragonCenter = (scene.objects[1].m_boundingBox.min + scene.objects[1].m_boundingBox.max) * 0.5;
 		std::cout << "Rendering vertigo dolly-zoom + orbit clip around dragon (scene1)..." << std::endl;
-		// 1s vertigo dolly-zoom (dragon stays the same size, background stretches) into 2s of orbit.
-		// Glass sphere placed 4 units in front of the camera's starting position; pass through
-		// it (20 frames), vertigo dolly-zoom to within 11 units of the dragon while FOV widens
-		// from 55 degrees - a wider, "further away" establishing FOV (25 frames), then orbit
-		// (45 frames) to show it off. 90 frames total, matching the earlier clip's length.
-		renderGlassRevealVertigoOrbitClip(scene, dragonCenter, 1.2, 4.0, 20, 25, 45, 55.0, 11.0, 80.0,
+
+		// 1s vertigo dolly-zoom (dragon stays the same size, background stretches) into 2s of
+		// orbit, 90 frames total, matching the earlier clip's length: pass through the glass
+		// sphere (kGlassPhaseFrames), vertigo dolly-zoom in (kDollyPhaseFrames), then orbit to
+		// show it off (kOrbitPhaseFrames).
+		constexpr double kGlassSphereRadius = 1.2;
+		constexpr double kGlassSphereDistanceFromCamera = 4.0; // sphere placed this far in front of the camera's starting position
+		constexpr int kGlassPhaseFrames = 20;
+		constexpr int kDollyPhaseFrames = 25;
+		constexpr int kOrbitPhaseFrames = 45;
+		constexpr double kDollyFovStartDegrees = 55.0; // wider, "further away" establishing FOV
+		constexpr double kDollyTargetMinDistance = 11.0; // how close the dolly-zoom ends up to the dragon
+		constexpr double kDollyMaxFovDegrees = 80.0; // safety cap regardless of kDollyTargetMinDistance
+
+		renderGlassRevealVertigoOrbitClip(scene, dragonCenter, kGlassSphereRadius, kGlassSphereDistanceFromCamera,
+										  kGlassPhaseFrames, kDollyPhaseFrames, kOrbitPhaseFrames,
+										  kDollyFovStartDegrees, kDollyTargetMinDistance, kDollyMaxFovDegrees,
 										  "output/finalProject/orbit_scene1", "scene1_orbit");
 	}
 	else if (sceneStem == "scene2")

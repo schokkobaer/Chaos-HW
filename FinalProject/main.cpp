@@ -56,7 +56,8 @@ int main(int argc, char **argv)
 	}
 	else
 	{
-		sceneFiles = {"scene1.crtscene"};
+		std::cerr << "Usage: " << argv[0] << " <scene1.crtscene> [<scene2.crtscene> ...]" << std::endl;
+		return 1;
 	}
 
 #if defined(NDEBUG)
