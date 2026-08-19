@@ -90,14 +90,18 @@ void appendSphereMesh(Object &emptyLightObject, const CRTVector &center, double 
 // object that's geometrically present and correctly intersected yet invisible in the render.
 void addGlassSphereToScene(Scene &scene, const CRTVector &center, double radius)
 {
+	constexpr double kGlassIndexOfRefraction = 1.5;
+	constexpr int kGlassSphereStacks = 24;
+	constexpr int kGlassSphereSlices = 32;
+
 	Object &glassObject = scene.objects.emplace_back();
 	double glassAlbedo[3] = {1.0, 1.0, 1.0};
 	Material glassMaterial(glassAlbedo, MaterialType::REFRACTIVE, true);
-	glassMaterial.setIndexOfRefraction(1.5);
+	glassMaterial.setIndexOfRefraction(kGlassIndexOfRefraction);
 	glassObject.m_materialIndex = static_cast<int>(scene.materials.size());
 	scene.materials.push_back(glassMaterial);
 
-	appendSphereMesh(glassObject, center, radius, 24, 32);
+	appendSphereMesh(glassObject, center, radius, kGlassSphereStacks, kGlassSphereSlices);
 	for (CRTTriangle &triangle : glassObject.m_triangles)
 	{
 		triangle.setVertexNormals(
@@ -267,6 +271,8 @@ void writePPM(const std::string &path, const Scene &scene, const std::vector<CRT
 
 void renderKnownOrbitClip(const std::string &sceneStem, Scene &scene)
 {
+	constexpr int kOrbitFrameCount = 90; // matches the 90-frame length of the scene1 glass+vertigo+orbit clip
+
 	if (sceneStem == "scene1")
 	{
 		// object 1 is the dragon mesh (object 0 is the ground plane).
@@ -304,14 +310,14 @@ void renderKnownOrbitClip(const std::string &sceneStem, Scene &scene)
 		// and slightly above rather than reusing scene.camera's (exterior, blocked) position.
 		scene.camera.origin = pivot + CRTVector(0.0, 1.2, 0.85);
 		std::cout << "Rendering orbit clip around glass/mirror spheres (scene2)..." << std::endl;
-		renderOrbitClip(scene, pivot, 90, "output/finalProject/orbit_scene2", "scene2_orbit");
+		renderOrbitClip(scene, pivot, kOrbitFrameCount, "output/finalProject/orbit_scene2", "scene2_orbit");
 	}
 	else if (sceneStem == "my_scene")
 	{
 		// Blender-exported cube scene; orbit around the origin using the scene's own
 		// (already well-framed) camera position as the starting distance/height.
 		std::cout << "Rendering orbit clip around cube (my_scene)..." << std::endl;
-		renderOrbitClip(scene, CRTVector(0.0, 0.0, 0.0), 90, "output/finalProject/orbit_my_scene", "my_scene_orbit");
+		renderOrbitClip(scene, CRTVector(0.0, 0.0, 0.0), kOrbitFrameCount, "output/finalProject/orbit_my_scene", "my_scene_orbit");
 	}
 }
 

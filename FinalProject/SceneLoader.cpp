@@ -25,17 +25,27 @@ CRTColor colorFromUnitFloats(const rapidjson::Value &arr)
 }
 
 // Resolves scene resource paths (e.g. bitmap texture files) that are given relative to the
-// FinalProject folder, regardless of whether the binary is run from the repo root or its own
-// build directory.
+// FinalProject folder.
 std::string resolveResourcePath(const std::string &relativePath)
 {
-	const std::filesystem::path absoluteCandidate(relativePath);
+	return resolveExistingPath(relativePath, {
+											 "FinalProject",
+											 "../FinalProject",
+											 "../../FinalProject",
+										 });
+}
+
+} // namespace
+
+std::string resolveExistingPath(const std::string &path, const std::vector<std::filesystem::path> &searchDirs)
+{
+	const std::filesystem::path absoluteCandidate(path);
 	if (absoluteCandidate.is_absolute() && std::filesystem::exists(absoluteCandidate))
 	{
 		return absoluteCandidate.string();
 	}
 
-	std::string trimmed = relativePath;
+	std::string trimmed = path;
 	while (!trimmed.empty() && trimmed.front() == '/')
 	{
 		trimmed.erase(trimmed.begin());
@@ -46,13 +56,9 @@ std::string resolveResourcePath(const std::string &relativePath)
 		return input.string();
 	}
 
-	const std::vector<std::filesystem::path> candidates = {
-		std::filesystem::path("FinalProject") / input,
-		std::filesystem::path("../FinalProject") / input,
-		std::filesystem::path("../../FinalProject") / input,
-	};
-	for (const auto &candidate : candidates)
+	for (const auto &searchDir : searchDirs)
 	{
+		const std::filesystem::path candidate = searchDir / input;
 		if (std::filesystem::exists(candidate))
 		{
 			return candidate.string();
@@ -60,8 +66,6 @@ std::string resolveResourcePath(const std::string &relativePath)
 	}
 	return trimmed;
 }
-
-} // namespace
 
 bool loadScene(const std::string &path, Scene &scene)
 {

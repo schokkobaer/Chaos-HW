@@ -12,34 +12,18 @@ namespace
 {
 
 	using crt::CRTColor;
+	using crt::resolveExistingPath;
 	using crt::Scene;
 
 	// Resolves a scene file argument against the FinalProject/Scenes folder, regardless of whether
 	// the binary is run from the repo root or its own build directory.
 	std::string resolveScenePath(const std::string &sceneFile)
 	{
-		const std::filesystem::path input(sceneFile);
-		if (input.is_absolute() && std::filesystem::exists(input))
-		{
-			return input.string();
-		}
-
-		const std::vector<std::filesystem::path> candidates = {
-			input,
-			std::filesystem::path("FinalProject/Scenes") / input,
-			std::filesystem::path("../FinalProject/Scenes") / input,
-			std::filesystem::path("../../FinalProject/Scenes") / input,
-		};
-
-		for (const auto &candidate : candidates)
-		{
-			if (std::filesystem::exists(candidate))
-			{
-				return candidate.string();
-			}
-		}
-
-		return sceneFile;
+		return resolveExistingPath(sceneFile, {
+												  "FinalProject/Scenes",
+												  "../FinalProject/Scenes",
+												  "../../FinalProject/Scenes",
+											  });
 	}
 
 } // namespace
